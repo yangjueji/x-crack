@@ -29,9 +29,9 @@ import (
 
 	"gopkg.in/cheggaaa/pb.v2"
 
+	"strings"
 	"sync"
 	"time"
-	"strings"
 )
 
 var (
@@ -73,6 +73,8 @@ var (
 		"SNMP": true,
 	}
 
+	NamePorts = map[string]int{}
+
 	// 标记特定服务的特定用户是否破解成功，成功的话不再尝试破解该用户
 	SuccessHash map[string]bool
 
@@ -84,8 +86,10 @@ func init() {
 	CacheService = cache.New(cache.NoExpiration, cache.DefaultExpiration)
 
 	SupportProtocols = make(map[string]bool)
-	for _, proto := range PortNames {
+	NamePorts = make(map[string]int)
+	for port, proto := range PortNames {
 		SupportProtocols[strings.ToUpper(proto)] = true
+		NamePorts[proto] = port
 	}
 
 }

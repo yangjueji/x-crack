@@ -35,7 +35,14 @@ import (
 
 func ScanMongodb(s models.Service) (err error, result models.ScanResult) {
 	result.Service = s
-	url := fmt.Sprintf("mongodb://%v:%v@%v:%v/%v", s.Username, s.Password, s.Ip, s.Port, "test")
+	var url string
+	if len(s.Username) == 0 {
+		url = fmt.Sprintf("mongodb://%v:%v/%v", s.Ip, s.Port, "test")
+	} else if len(s.Password) == 0 {
+		url = fmt.Sprintf("mongodb://%v@%v:%v/%v", s.Username, s.Ip, s.Port, "test")
+	} else {
+		url = fmt.Sprintf("mongodb://%v:%v@%v:%v/%v", s.Username, s.Password, s.Ip, s.Port, "test")
+	}
 	session, err := mgo.DialWithTimeout(url, vars.TimeOut)
 
 	if err == nil {

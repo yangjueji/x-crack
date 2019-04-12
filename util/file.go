@@ -25,15 +25,42 @@ THE SOFTWARE.
 package util
 
 import (
-	"x-crack/models"
+	"fmt"
+	"net"
+	"regexp"
 	"x-crack/logger"
+	"x-crack/models"
 	"x-crack/vars"
 
-	"os"
 	"bufio"
-	"strings"
+	"os"
 	"strconv"
+	"strings"
 )
+
+func Hosts(cidr string) ([]string, error) {
+	ip, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+
+	var ips []string
+	for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
+		ips = append(ips, ip.String())
+	}
+	// remove network address and broadcast address
+	return ips[1 : len(ips)-1], nil
+}
+
+//  http://play.golang.org/p/m8TNTtygK0
+func inc(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
+}
 
 func ReadIpList(fileName string) (ipList []models.IpAddr) {
 	ipListFile, err := os.Open(fileName)
@@ -45,6 +72,8 @@ func ReadIpList(fileName string) (ipList []models.IpAddr) {
 
 	scanner := bufio.NewScanner(ipListFile)
 	scanner.Split(bufio.ScanLines)
+	portR, _ := regexp.Compile(":\\d+")
+	protoR, _ := regexp.Compile("\\|\\w+")
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -53,31 +82,78 @@ func ReadIpList(fileName string) (ipList []models.IpAddr) {
 		}
 		ipPort := strings.TrimSpace(line)
 		t := strings.Split(ipPort, ":")
-		ip := t[0]
-		portProtocol := t[1]
-		tmpPort := strings.Split(portProtocol, "|")
-		// ip列表中指定了端口对应的服务
-		if len(tmpPort) == 2 {
-			port, _ := strconv.Atoi(tmpPort[0])
-			protocol := strings.ToUpper(tmpPort[1])
-			if vars.SupportProtocols[protocol] {
-				addr := models.IpAddr{Ip: ip, Port: port, Protocol: protocol}
-				ipList = append(ipList, addr)
-			} else {
-				logger.Log.Infof("Not support %v, ignore: %v:%v", protocol, ip, port)
+		t = strings.Split(t[0], "|")
+		cidr := t[0]
+		ips := make([]string, 0)
+		if strings.Contains(cidr, "/") {
+			ips, err = Hosts(cidr)
+			if err != nil {
+				panic(err)
 			}
 		} else {
-			// 通过端口查服务
-			port, err := strconv.Atoi(tmpPort[0])
-			if err == nil {
-				protocol, ok := vars.PortNames[port]
-				if ok && vars.SupportProtocols[protocol] {
-					addr := models.IpAddr{Ip: ip, Port: port, Protocol: protocol}
+			ips = append(ips, cidr)
+		}
+		tmpPorts := portR.FindAllString(line, -1)
+		tmpProtos := protoR.FindAllString(line, -1)
+		ports := make([]int, 0, len(tmpPorts))
+		protos := make([]string, 0, len(tmpProtos))
+		for _, port := range tmpPorts {
+			port = strings.Trim(port, ":")
+			intPort, err := strconv.Atoi(port)
+			if err != nil {
+				panic(err)
+			}
+			ports = append(ports, intPort)
+		}
+		for _, proto := range tmpProtos {
+			proto = strings.Trim(proto, "|")
+			protos = append(protos, proto)
+		}
+		fmt.Printf("ips %v", ips)
+		fmt.Printf("ports %v", ports)
+		fmt.Printf("protos %v", protos)
+		for _, ip := range ips {
+			if len(protos) == 0 && len(ports) == 0 {
+				// 无端口无服务名使用所有服务
+				for k, v := range vars.PortNames {
+					addr := models.IpAddr{Ip: ip, Port: k, Protocol: v}
 					ipList = append(ipList, addr)
+				}
+			} else if len(protos) != 0 && len(ports) != 0 {
+				// ip列表中指定了端口对应的服务
+				for _, port := range ports {
+					for _, proto := range protos {
+						protocol := strings.ToUpper(proto)
+						if vars.SupportProtocols[protocol] {
+							addr := models.IpAddr{Ip: ip, Port: port, Protocol: protocol}
+							ipList = append(ipList, addr)
+						} else {
+							logger.Log.Infof("Not support %v, ignore: %v:%v", protocol, ip, port)
+						}
+					}
+				}
+			} else if len(ports) != 0 {
+				// 通过端口查服务
+				for _, port := range ports {
+					protocol, ok := vars.PortNames[port]
+					if ok && vars.SupportProtocols[protocol] {
+						addr := models.IpAddr{Ip: ip, Port: port, Protocol: protocol}
+						ipList = append(ipList, addr)
+					}
+				}
+			} else if len(protos) != 0 {
+				// 通过服务名查服务
+				for _, proto := range protos {
+					protocol := strings.ToUpper(proto)
+					port, ok := vars.NamePorts[protocol]
+					fmt.Printf("%v %v", port, protocol)
+					if ok && vars.SupportProtocols[protocol] {
+						addr := models.IpAddr{Ip: ip, Port: port, Protocol: protocol}
+						ipList = append(ipList, addr)
+					}
 				}
 			}
 		}
-
 	}
 
 	return ipList
@@ -96,9 +172,7 @@ func ReadUserDict(userDict string) (users []string, err error) {
 
 	for scanner.Scan() {
 		user := strings.TrimSpace(scanner.Text())
-		if user != "" {
-			users = append(users, user)
-		}
+		users = append(users, user)
 	}
 	return users, err
 }
@@ -116,9 +190,7 @@ func ReadPasswordDict(passDict string) (password []string, err error) {
 
 	for scanner.Scan() {
 		passwd := strings.TrimSpace(scanner.Text())
-		if passwd != "" {
-			password = append(password, passwd)
-		}
+		password = append(password, passwd)
 	}
 	password = append(password, "")
 	return password, err
